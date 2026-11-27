@@ -68,6 +68,23 @@ android {
     val signingPass = (rootProject.extra["opalDeskSigningPassword"] as? String).orEmpty()
     val signingAlias = (rootProject.extra["opalDeskSigningAlias"] as? String).orEmpty().ifBlank { "opaldesk" }
 
+    val requireReleaseKey = (System.getenv("OPALDESK_REQUIRE_RELEASE_KEY") == "1")
+        || (project.findProperty("requireReleaseKey")?.toString()?.equals("true", ignoreCase = true) == true)
+        || (System.getenv("GITHUB_REF")?.startsWith("refs/tags/v") == true)
+    val allowUnsignedRelease = !requireReleaseKey && (
+        (System.getenv("OPALDESK_ALLOW_UNSIGNED_RELEASE") == "1")
+            || (project.findProperty("allowUnsignedRelease")?.toString()?.equals("true", ignoreCase = true) == true)
+        )
+    val isReleaseTaskRequested = gradle.startParameter.taskNames.any { it.contains("Release", ignoreCase = true) }
+
+    if ((requireReleaseKey || (isReleaseTaskRequested && !allowUnsignedRelease)) && activeKs == null) {
+        throw GradleException(
+            "Release build requires OPALDESK_KEYSTORE (or local opaldesk.p12). " +
+                "Run ./scripts/sync-signing-secrets.sh to copy opaldesk.p12 from ../OpalDesk, or for keyless CI " +
+                "verification pass -PallowUnsignedRelease=true (or OPALDESK_ALLOW_UNSIGNED_RELEASE=1)."
+        )
+    }
+
     signingConfigs {
         if (activeKs != null) {
             create("extrelease") {

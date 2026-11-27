@@ -1,5 +1,6 @@
 # Local configuration & Android signing secrets
 local.properties
+opaldesk.p12
 *.p12
 *.jks
 *.keystore

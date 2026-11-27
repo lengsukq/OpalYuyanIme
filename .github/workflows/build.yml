@@ -1,0 +1,204 @@
+name: Build OpalYuyanIme
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Publish GitHub Release from main branch (public signed APK download)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      prerelease:
+        description: 'Mark manually dispatched GitHub Release as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+# Least-privilege default across all jobs (including pull_request)
+permissions:
+  contents: read
+
+jobs:
+  build-plugin:
+    name: Build & Verify OpalYuyanIme APK
+    runs-on: ubuntu-latest
+    outputs:
+      plugin_version: ${{ steps.build_apk.outputs.plugin_version }}
+      plugin_version_code: ${{ steps.build_apk.outputs.plugin_version_code }}
+      plugin_apk_name: ${{ steps.build_apk.outputs.plugin_apk_name }}
+      plugin_is_signed: ${{ steps.build_apk.outputs.plugin_is_signed }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - name: Setup JDK 21 & Gradle Cache
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: 'gradle'
+
+      - name: Ensure Android SDK Build-Tools & Platform 37.0
+        shell: bash
+        run: |
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ -z "$SDK" ] || [ ! -d "$SDK" ]; then
+            echo "::error::ANDROID_HOME / ANDROID_SDK_ROOT not found on runner"
+            exit 1
+          fi
+          if [ ! -f "$SDK/platforms/android-37.0/android.jar" ] || [ ! -x "$SDK/build-tools/37.0.0/apksigner" ]; then
+            SDKMGR="$(find "$SDK/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -n 1 || true)"
+            if [ -n "$SDKMGR" ]; then
+              yes | "$SDKMGR" --sdk_root="$SDK" "platforms;android-37.0" "build-tools;37.0.0" || true
+            fi
+          fi
+          test -f "$SDK/platforms/android-37.0/android.jar"
+          test -x "$SDK/build-tools/37.0.0/apksigner"
+
+      - name: Stage signing keystore file (never export password to GITHUB_ENV)
+        shell: bash
+        env:
+          KS_B64_PRIMARY: ${{ secrets.OPALDESK_KEYSTORE_BASE64 }}
+          HAS_KEYSTORE_PASS: ${{ secrets.OPALDESK_KEYSTORE_PASS != '' && '1' || '0' }}
+          IS_RELEASE_PUBLISH: ${{ (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' && github.ref == 'refs/heads/main')) && '1' || '0' }}
+        run: |
+          if [ "$IS_RELEASE_PUBLISH" = "1" ]; then
+            echo "OPALDESK_REQUIRE_RELEASE_KEY=1" >> "$GITHUB_ENV"
+            if [ -z "$KS_B64_PRIMARY" ] || [ "$HAS_KEYSTORE_PASS" != "1" ]; then
+              echo "::error title=Missing Release Signing Secrets::请在仓库 Settings -> Secrets and variables -> Actions 中配置 OPALDESK_KEYSTORE_BASE64 与 OPALDESK_KEYSTORE_PASS 后再触发正式发版。"
+              exit 1
+            fi
+          fi
+          if [ -n "$KS_B64_PRIMARY" ] && [ "$HAS_KEYSTORE_PASS" = "1" ]; then
+            KS_PATH="$RUNNER_TEMP/opaldesk.p12"
+            if python3 - "$KS_PATH" <<'PY'
+          import base64, os, re, sys
+          raw = os.environ.get("KS_B64_PRIMARY") or ""
+          m = re.search(r"MII[A-Za-z0-9+/=\s\-_]{400,}", raw)
+          cand = m.group(0) if m else raw
+          clean = re.sub(r"\s+", "", cand).replace("-", "+").replace("_", "/").strip("\"'")
+          rem = len(clean) % 4
+          if rem == 2:
+              clean += "=="
+          elif rem == 3:
+              clean += "="
+          data = base64.b64decode(clean, validate=True)
+          if len(data) < 500 or data[0] != 0x30:
+              raise ValueError(f"Decoded bytes length={len(data)} is not a valid PKCS#12 archive")
+          with open(sys.argv[1], "wb") as f:
+              f.write(data)
+          os.chmod(sys.argv[1], 0o600)
+          print(f"Staged release keystore from GitHub Secrets ({len(data)} bytes).")
+          PY
+            then
+              echo "OPALDESK_KEYSTORE=$KS_PATH" >> "$GITHUB_ENV"
+            else
+              if [ "$IS_RELEASE_PUBLISH" = "1" ]; then
+                echo "::error title=Invalid Keystore Secret::Failed to decode OPALDESK_KEYSTORE_BASE64."
+                exit 1
+              else
+                echo "::warning title=Invalid Keystore Secret::Keystore decode failed; falling back to unsigned CI verification build."
+                echo "OPALDESK_ALLOW_UNSIGNED_RELEASE=1" >> "$GITHUB_ENV"
+              fi
+            fi
+          else
+            echo "OPALDESK_ALLOW_UNSIGNED_RELEASE=1" >> "$GITHUB_ENV"
+            echo "No keystore secrets configured; non-release CI will produce unsigned verification APK only."
+          fi
+
+      - name: Build, Test & Verify OpalYuyanIme APK (:app)
+        id: build_apk
+        shell: bash
+        env:
+          OPALDESK_KEYSTORE_PASS: ${{ secrets.OPALDESK_KEYSTORE_PASS }}
+          OPALDESK_EXPECTED_CERT_SHA256: ${{ secrets.OPALDESK_EXPECTED_CERT_SHA256 }}
+        run: |
+          chmod +x ./gradlew scripts/build-plugin.sh
+          ARGS=(--no-daemon --output-dir build/out)
+          if [ "${OPALDESK_ALLOW_UNSIGNED_RELEASE:-0}" = "1" ]; then
+            ARGS+=(--allow-unsigned)
+          fi
+          ./scripts/build-plugin.sh "${ARGS[@]}"
+
+      - name: Cleanup temporary keystore
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/opaldesk.p12"
+
+      - name: Upload OpalYuyanIme Build Artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: OpalYuyanIme-Android_v${{ steps.build_apk.outputs.plugin_version }}
+          path: |
+            ${{ steps.build_apk.outputs.plugin_apk_path }}
+            ${{ steps.build_apk.outputs.plugin_apk_path }}.sha256
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-plugin]
+    if: >-
+      needs.build-plugin.result == 'success' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true' && github.ref == 'refs/heads/main'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Verify release preconditions & tag immutability
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IS_SIGNED: ${{ needs.build-plugin.outputs.plugin_is_signed }}
+          APK_NAME: ${{ needs.build-plugin.outputs.plugin_apk_name }}
+          TARGET_TAG: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', needs.build-plugin.outputs.plugin_version) }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ "$IS_SIGNED" != "true" ] || echo "$APK_NAME" | grep -q "unsigned"; then
+            echo "::error::Refusing to publish unsigned OpalYuyanIme APK ($APK_NAME) to GitHub Releases."
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if gh api "repos/$REPO/releases/tags/$TARGET_TAG" >/dev/null 2>&1; then
+              echo "::error::Release for tag $TARGET_TAG already exists; refusing to overwrite existing release via workflow_dispatch."
+              exit 1
+            fi
+          fi
+
+      - name: Download Verified Android Release Artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: OpalYuyanIme-Android_v${{ needs.build-plugin.outputs.plugin_version }}
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}', needs.build-plugin.outputs.plugin_version) }}
+          name: OpalYuyanIme v${{ needs.build-plugin.outputs.plugin_version }}
+          generate_release_notes: true
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && format('{0}', github.event.inputs.prerelease) == 'true' }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/${{ needs.build-plugin.outputs.plugin_apk_name }}
+            dist/${{ needs.build-plugin.outputs.plugin_apk_name }}.sha256
