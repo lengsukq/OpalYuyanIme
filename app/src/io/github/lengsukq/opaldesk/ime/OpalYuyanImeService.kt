@@ -47,9 +47,9 @@ class OpalYuyanImeService : InputMethodService() {
         const val PREFS_NAME = "opal_yuyan_plugin_prefs"
         const val KEY_DEFAULT_SCHEMA = "default_schema"
 
-        private val BRIDGE_URI: Uri = Uri.parse("content://io.github.lengsukq.opaldesk.bridge")
+        private val BRIDGE_URI: Uri = Uri.parse("content://io.github.lengsukq.opaldesk.provider")
         private const val METHOD_PLUGIN_IME_SYNC = "pluginImeSync"
-        private const val PLUGIN_IME_BINDER_DESC = "io.github.lengsukq.opaldesk.IPluginImeSession"
+        private const val PLUGIN_IME_BINDER_DESC = "io.github.lengsukq.opaldesk.ime.IOpalImePluginSession"
 
         private const val TX_COMMIT_TEXT = 1
         private const val TX_SOFT_KEY_CHAR = 2
@@ -62,10 +62,10 @@ class OpalYuyanImeService : InputMethodService() {
         private const val SPECIAL_SPACE = 2
         private const val SPECIAL_ENTER = 3
         private const val SPECIAL_TOGGLE_LANG = 4
-        private const val SPECIAL_CYCLE_SCHEMA = 5
-        private const val SPECIAL_NEXT_PAGE = 6
-        private const val SPECIAL_PREV_PAGE = 7
-        private const val SPECIAL_DISMISS_COMPOSING = 8
+        private const val SPECIAL_NEXT_PAGE = 5
+        private const val SPECIAL_PREV_PAGE = 6
+        private const val SPECIAL_DISMISS_COMPOSING = 7
+        private const val SPECIAL_CYCLE_SCHEMA = 8
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
