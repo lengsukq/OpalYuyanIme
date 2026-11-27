@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="ime_plugin_app_name">OpalDesk 语燕输入法插件</string>
+    <string name="ime_plugin_service_label">OpalDesk 语燕输入法插件</string>
+    <string name="ime_plugin_settings_title">语燕输入法插件设置</string>
+    <string name="ime_subtype_yuyan_zh">中文（语燕全拼/双拼/九键）</string>
+    <string name="ime_subtype_yuyan_en">English (US)</string>
+</resources>

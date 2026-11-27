@@ -1,0 +1,34 @@
+# Local configuration & Android signing secrets
+local.properties
+*.p12
+*.jks
+*.keystore
+*.pk8
+*.pem
+*.key
+keystore.properties
+signing.properties
+
+# Build outputs & Gradle/Kotlin caches
+.gradle/
+.kotlin/
+build/
+**/build/
+
+# IDE & agent tool directories
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.cxx/
+.externalNativeBuild/
+captures/
+.navigation/
+.coding-tools/
+
+# OS & temporary files
+.DS_Store
+Thumbs.db
+*.log
+*.hprof

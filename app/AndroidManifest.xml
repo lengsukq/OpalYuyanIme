@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Android 11+ package visibility so the companion IME plugin can sync with OpalDesk BridgeProvider -->
+    <queries>
+        <package android:name="io.github.lengsukq.opaldesk" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:directBootAware="true"
+        android:label="@string/ime_plugin_app_name"
+        android:supportsRtl="true">
+
+        <service
+            android:name=".OpalYuyanImeService"
+            android:directBootAware="true"
+            android:exported="true"
+            android:label="@string/ime_plugin_service_label"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/opal_yuyan_ime_method" />
+        </service>
+
+        <activity
+            android:name=".OpalYuyanSettingsActivity"
+            android:exported="true"
+            android:label="@string/ime_plugin_settings_title"
+            android:theme="@android:style/Theme.DeviceDefault.DayNight">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

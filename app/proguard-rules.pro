@@ -1,0 +1,2 @@
+-keep class com.yuyan.inputmethod.core.** { *; }
+-keep class io.github.lengsukq.opaldesk.ime.** { *; }
