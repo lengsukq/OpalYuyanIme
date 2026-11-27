@@ -66,6 +66,7 @@ class OpalYuyanImeService : InputMethodService() {
         private const val SPECIAL_PREV_PAGE = 6
         private const val SPECIAL_DISMISS_COMPOSING = 7
         private const val SPECIAL_CYCLE_SCHEMA = 8
+        private const val SPECIAL_HIDE_SELF = 9
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -253,9 +254,15 @@ class OpalYuyanImeService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        if (!opalDeskProviderReachable) {
+            attachToOpalDeskProvider()
+        }
         requestCursorAnchorUpdatesSafe()
         updateStandaloneVisibility()
         syncStateToOpalDesk()
+        if (!yieldedCurrentSession && inputActive) {
+            notifyOpalDeskShowRequested()
+        }
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -283,19 +290,27 @@ class OpalYuyanImeService : InputMethodService() {
     }
 
     override fun onShowInputRequested(flags: Int, configChange: Boolean): Boolean {
-        val show = super.onShowInputRequested(flags, configChange)
+        super.onShowInputRequested(flags, configChange)
+        if (!opalDeskProviderReachable) {
+            attachToOpalDeskProvider()
+        }
         if (!yieldedCurrentSession && inputActive) {
-            callOpalDeskProvider(
-                "showRequested",
-                Bundle().apply {
-                    putInt("imeDisplayId", resolveCurrentImeDisplayId())
-                    putInt("inputType", activeInputType)
-                    putString("pkg", activePkg)
-                },
-            )
+            syncStateToOpalDesk()
+            notifyOpalDeskShowRequested()
             updateStandaloneVisibility()
         }
         return true
+    }
+
+    private fun notifyOpalDeskShowRequested() {
+        callOpalDeskProvider(
+            "showRequested",
+            Bundle().apply {
+                putInt("imeDisplayId", resolveCurrentImeDisplayId())
+                putInt("inputType", activeInputType)
+                putString("pkg", activePkg)
+            },
+        )
     }
 
     override fun onUpdateCursorAnchorInfo(cursorAnchorInfo: CursorAnchorInfo?) {
@@ -468,6 +483,15 @@ class OpalYuyanImeService : InputMethodService() {
                 currentInputConnection?.finishComposingText()
                 syncStateToOpalDesk()
             }
+            SPECIAL_HIDE_SELF -> {
+                if (engine.snapshot().isComposing) {
+                    engine.clearComposition()
+                    currentInputConnection?.setComposingText("", 1)
+                    currentInputConnection?.finishComposingText()
+                }
+                requestHideSelf(0)
+                syncStateToOpalDesk()
+            }
         }
     }
 
@@ -620,6 +644,10 @@ class OpalYuyanImeService : InputMethodService() {
         }
         val reply = callOpalDeskProvider("state", b)
         opalDeskProviderReachable = reply?.getBoolean("ok", false) == true
+        if (reply?.getBoolean("needAttach", false) == true) {
+            attachToOpalDeskProvider()
+            callOpalDeskProvider("state", b)
+        }
     }
 
     private fun forwardGlobalShortcutToOpalDesk(event: KeyEvent): Boolean {
